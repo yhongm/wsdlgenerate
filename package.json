@@ -1,6 +1,6 @@
 {
   "name": "wsdlgenerate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "generate  wsdl file",
   "main": "index.js",
   "scripts": {

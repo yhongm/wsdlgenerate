@@ -41,11 +41,6 @@ class XML {
             if (values._attr) {
                 this._getAttributes(values._attr, attributes);
             }
-            if (values._cdata) {
-                children.push(
-                    ('<![CDATA[' + values._cdata).replace(/\]\]>/g, ']]]]><![CDATA[>') + ']]>'
-                );
-            }
             if (values.forEach) {
                 isStringContent = false;
                 children.push('');
@@ -130,9 +125,9 @@ class WsdlGenerateUtil {
             nameSpacePrefix: "xmlns",
             props: {
                 name: wsdlServerName,
-                targetNamespace: wsdlNameSpaceUrl + "/" + wsdlServerNameLowerCase + ".wsdl",
+                targetNamespace: wsdlNameSpaceUrl,
                 tns: wsdlNameSpaceUrl,
-                xsd1: wsdlNameSpaceUrl + "/" + wsdlServerNameLowerCase + ".wsdl",
+                n: wsdlNameSpaceUrl + "/" + wsdlServerNameLowerCase + "/Name/Types/",
                 soap: "http://schemas.xmlsoap.org/wsdl/soap/",
                 wsdl: "http://schemas.xmlsoap.org/wsdl/",
                 soap12: "http://schemas.xmlsoap.org/wsdl/soap12/",
@@ -146,8 +141,8 @@ class WsdlGenerateUtil {
                             name: "schema",
                             prefix: "xsd",
                             props: {
-                                targetNamespace: wsdlNameSpaceUrl + "/" + wsdlServerNameLowerCase + ".xsd",
-                                xsd: "http://www.w3.org/2000/10/XMLSchema"
+                                targetNamespace: wsdlNameSpaceUrl + "/" + wsdlServerNameLowerCase + "/Name/Types/",
+                                xsd: "http://www.w3.org/2001/XMLSchema"
                             },
                             children: [
                             ]
@@ -188,12 +183,14 @@ class WsdlGenerateUtil {
                         {
                             name: "port",
                             props: {
-                                name: wsdlServerName + "Port",
+                                name: wsdlServerName + "PortType",
                                 binding: "tns:" + wsdlServerName + "SoapBinding"
                             }
                             , children: [
                                 {
-                                    name: "address", props: {
+                                    name: "address",
+                                    prefix: "soap",
+                                    props: {
                                         location: wsdlServerAddress
                                     }
                                 }
@@ -210,8 +207,9 @@ class WsdlGenerateUtil {
      * @param {*} propValue 
      * @returns 
      */
-    isNameSpaceProp(propKey, propValue) {
-        return /^http|s:\/\/?(.*)$/.test(propValue) && propKey !== "targetNamespace"
+    _isNameSpaceProp(propKey, propValue) {
+        let extraList = ["soapAction", "location", "transport"]
+        return (/^http|s:\/\/?(.*)$/.test(propValue) && propKey !== "targetNamespace") && (extraList.indexOf(propKey) === -1)
     }
     /**
      * 
@@ -219,14 +217,167 @@ class WsdlGenerateUtil {
      * @param {*} props 
      * @param {*} attr 
      */
-    cloneProps(nameSpacePrefix, props, attr) {
+    _cloneProps(nameSpacePrefix, props, attr) {
         Object.keys(props).forEach((key) => {
-            if (!this.isNameSpaceProp(key, props[key])) {
+            if (!this._isNameSpaceProp(key, props[key])) {
                 attr[key] = props[key]
             } else {
                 attr[nameSpacePrefix + ":" + key] = props[key]
             }
         })
+    }
+    _elementProp(param, element) {
+        if (param.hasOwnProperty("type")) {
+            if(param.useCustomElement){
+                element.props.type = "n:" + param.type
+                
+            }else{
+                element.props.type = "xsd:" + param.type
+            }
+        }
+        if(param.hasOwnProperty("ref")){
+            if(param.useCustomElement){
+                element.props.ref = "n:" + param.ref
+            }else{
+                element.props.ref = "xsd:" + param.ref
+            }
+        }
+        if (param.hasOwnProperty("minOccurs")) {
+            element.props.minOccurs = param.minOccurs
+        }
+        if (param.hasOwnProperty("maxOccurs")) {
+            element.props.maxOccurs = param.maxOccurs
+        }
+        if (param.hasOwnProperty("nillable")) {
+            element.props.nillable = param.nillable
+        }
+    }
+    _generateElement(param, extraElements, typeElements) {
+        let element = {
+            name: "element",
+            props: {
+                name: param.name,
+            }
+        }
+        this._elementProp(param, element)
+        if (param.hasOwnProperty("_Type")) {
+            element.props.type = "n:" + param._Type.typeName
+            let typeElement = {
+                name: "complexType",
+                props: {
+                    name: param._Type.typeName,
+                }, children: [
+                    {
+                        name: "sequence", children: []
+                    }
+                ]
+            }
+            param._Type.types.forEach((typeParam) => {
+                let typeChildElement = {
+                    name: "element",
+                    props: {
+                        name: typeParam.name,
+                    }
+                }
+                this._elementProp(typeParam, typeChildElement)
+
+                typeElement.children[0].children.push(typeChildElement)
+            })
+            typeElements.push(typeElement)
+        }
+
+        if (param.hasOwnProperty("ref")) {
+            let extraElement = {
+                name: "element",
+                props: {
+                    name: param.ref,
+                }, children: [
+                    {
+                        name: "complexType",
+                        children: [
+                            {
+                                name: "sequence", children: []
+                            }
+                        ]
+                    }
+                ]
+            }
+            param._extra.forEach((extraParam) => {
+                let refChildElement = {
+                    name: "element",
+                    props: {
+                        name: extraParam.name,
+                    }
+                }
+                this._elementProp(extraParam, refChildElement)
+                extraElement.children[0].children[0].children.push(refChildElement)
+            })
+            delete element.props.name
+            delete element.props.type
+            extraElements.push(extraElement)
+            element.props.ref = "n:" + param.ref
+        }
+        return element
+    }
+    addElement(param, json) {
+        json.children.forEach((childJson) => {
+            if (childJson.name === "types") {
+                let element = {
+                    name: "element",
+                    props: {
+                        name: param.name,
+                    }, children: [
+                        {
+                            name: "complexType",
+                            children: [
+                                {
+                                    name: "sequence", children: []
+                                }
+                            ]
+                        }
+                    ]
+                }
+                param.elements.forEach((extraParam) => {
+                    let childElement = {
+                        name: "element",
+                        props: {
+                            name: extraParam.name,
+                        }
+                    }
+                    this._elementProp(extraParam, childElement)
+                    element.children[0].children[0].children.push(childElement)
+                })
+                childJson.children[0].children.push(element)
+            }
+        })
+    }
+    addComplexType(param, json) {
+        json.children.forEach((childJson) => {
+            if (childJson.name === "types") {
+                let element = {
+                    name: "complexType",
+                    props: {
+                        name: param.name,
+                    }, children: [
+                        {
+                            name: "sequence", children: []
+                        }
+                    ]
+                }
+                param.elements.forEach((typeParam) => {
+                    let childElement = {
+                        name: "element",
+                        props: {
+                            name: typeParam.name,
+                        }
+                    }
+                    this._elementProp(typeParam, childElement)
+                    element.children[0].children.push(childElement)
+                })
+                childJson.children[0].children.push(element)
+            }
+        })
+       
     }
     /**
      * 
@@ -302,72 +453,20 @@ class WsdlGenerateUtil {
                 let inputRequestElements = []
                 let outputResponseElements = []
                 let extraElements = []
+                let typeElements = []
                 inputParams.forEach((param) => {
-                    let element = {
-                        name: "element",
-                        props: {
-                            name: param.name,
-                            type: param.type
-                        }
-                    }
-                    if (param.hasOwnProperty("ref")) {
-                        let extraElement = { name: param.ref, children: [] }
-                        param._extra.forEach((extraParam) => {
-                            extraElement.children.push({
-                                name: "element",
-                                props: {
-                                    name: extraParam.name,
-                                    type: extraParam.type
-                                }
-                            })
-                        })
-                        extraElements.push(extraElement)
-                        element.props.ref = param.ref
-                    }
+                    let element = this._generateElement(param, extraElements, typeElements)
                     inputRequestElements.push(element)
                 })
                 outParams.forEach((param) => {
-                    let element = {
-                        name: "element",
-                        props: {
-                            name: param.name,
-                            type: param.type
-                        }
-                    }
-                    if (param.hasOwnProperty("ref")) {
-                        let extraElement = { name: param.ref, children: [] }
-                        param._extra.forEach((extraParam) => {
-                            extraElement.children.push({
-                                name: "element",
-                                props: {
-                                    name: extraParam.name,
-                                    type: extraParam.type
-                                }
-                            })
-                        })
-                        extraElements.push(extraElement)
-                        element.props.ref = param.ref
-                    }
+                    let element = this._generateElement(param, extraElements, typeElements)
                     outputResponseElements.push(element)
                 })
                 extraElements.forEach((extraElement) => {
-                    childJson.children[0].children.push({
-                        name: "element",
-                        props: {
-                            name: extraElement.name,
-                        },
-                        children: [
-                            {
-                                name: "complexType",
-                                children: [
-                                    {
-                                        name: "all",
-                                        children: extraElement.children
-                                    }
-                                ]
-                            }
-                        ]
-                    })
+                    childJson.children[0].children.push(extraElement)
+                })
+                typeElements.forEach((typeELement) => {
+                    childJson.children[0].children.push(typeELement)
                 })
                 childJson.children[0].children.push({
                     name: "element",
@@ -379,7 +478,7 @@ class WsdlGenerateUtil {
                             name: "complexType",
                             children: [
                                 {
-                                    name: "all",
+                                    name: "sequence",
                                     children: inputRequestElements
                                 }
                             ]
@@ -396,7 +495,7 @@ class WsdlGenerateUtil {
                             name: "complexType",
                             children: [
                                 {
-                                    name: "all",
+                                    name: "sequence",
                                     children: outputResponseElements
                                 }
                             ]
@@ -414,7 +513,7 @@ class WsdlGenerateUtil {
                     name: "part",
                     props: {
                         name: "body",
-                        element: "xsd1:" + funName + "Request"
+                        element: "n:" + funName + "Request"
                     }
                 }
             ]
@@ -428,7 +527,7 @@ class WsdlGenerateUtil {
                     name: "part",
                     props: {
                         name: "body",
-                        element: "xsd1:" + funName + "Response"
+                        element: "n:" + funName + "Response"
                     }
                 }
             ]
@@ -452,7 +551,7 @@ class WsdlGenerateUtil {
         itemObj[name] = []
         var attr = attrObj._attr
         if (props) {
-            this.cloneProps(nameSpacePrefix, props, attr)
+            this._cloneProps(nameSpacePrefix, props, attr)
             itemObj[name].push(attrObj)
         }
         if (jsonItem.children) {
